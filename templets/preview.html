@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>뉴스 미리보기</title>
+</head>
+<body>
+    <h2>크롤링된 뉴스 제목</h2>
+    <ul>
+        {% for title in titles %}
+            <li>{{ title }}</li>
+        {% endfor %}
+    </ul>
+    <form method="POST" action="/predict">
+        <button type="submit">🤖 예측하기</button>
+    </form>
+</body>
+</html>
