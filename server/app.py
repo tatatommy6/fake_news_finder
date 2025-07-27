@@ -1,16 +1,16 @@
 from flask import Flask, render_template, request, redirect
 from transformers import AutoTokenizer, BertForSequenceClassification
 from os.path import join, dirname
-import torch, json, subprocess
+import torch, json, subprocess, json
 
 
 app = Flask(__name__)
 
-#모델이 있을떄만
-# model_path = "/Users/kimminkyeol/Programming/fake_news_finder/server/kobert_clickbait_model_final"
+# 모델이 있을떄만
+model_path = "/Users/kimminkyeol/Programming/fake_news_finder/server/kobert_clickbait_model_final"
 
-# tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, local_files_only=True)
-# model = BertForSequenceClassification.from_pretrained(model_path, local_files_only=True)
+tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, local_files_only=True)
+model = BertForSequenceClassification.from_pretrained(model_path, local_files_only=True)
 
 model.eval()
 
@@ -53,8 +53,15 @@ def predict_route():
             "label": label,
             "confidence": f"{confidence:.2f}%"
         })
+        json.dump(results, open("predictions.json", "w", encoding = "utf-8"), ensure_ascii = False , indent = 4)
+
 
     return render_template('result.html', titles=titles, results=results)
+
+@app.route('/repredict', methods = ['POST'])
+def repredict():
+    subprocess.run(["python", "recrawling.py", keyword], check=True)
+    
 
 
 if __name__ == '__main__':
