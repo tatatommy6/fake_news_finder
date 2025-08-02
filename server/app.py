@@ -60,7 +60,9 @@ def predict_route():
 
 @app.route('/repredict', methods = ['POST'])
 def repredict():
+    keyword = request.form.get("keyword","")
     subprocess.run(["python", "recrawling.py", keyword], check=True)
+    
     
 
 
