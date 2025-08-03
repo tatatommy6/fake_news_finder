@@ -1,16 +1,18 @@
 from flask import Flask, render_template, request, redirect
-from transformers import AutoTokenizer, BertForSequenceClassification
+from transformers import AutoTokenizer, RobertaForSequenceClassification
 from os.path import join, dirname
 import torch, json, subprocess, json
 
 
 app = Flask(__name__)
+model_id = "tatatommy6/fake_news_detect"
 
-# 모델이 있을떄만
-model_path = "/Users/kimminkyeol/Programming/fake_news_finder/server/kobert_clickbait_model_final"
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+model = RobertaForSequenceClassification.from_pretrained(model_id)
 
-tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, local_files_only=True)
-model = BertForSequenceClassification.from_pretrained(model_path, local_files_only=True)
+
+
+
 
 model.eval()
 
