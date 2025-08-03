@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>예측 결과</title>
+</head>
+<body>
+    <h2>예측 결과</h2>
+    <table border="1" cellpadding="8">
+        <thead>
+            <tr>
+                <th>뉴스 제목</th>
+                <th>진위 여부</th>
+                <th>신뢰도</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in results %}
+            <tr>
+                <td>{{ item.title }}</td>
+                <td>{{ item.label }}</td>
+                <td>{{ item.confidence }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
