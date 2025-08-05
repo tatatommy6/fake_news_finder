@@ -61,10 +61,28 @@
                     const predictBtn = document.createElement("button");
                     predictBtn.textContent = "예측하기";
                     predictBtn.className = "btn btn-success mt-3";
-                    predictBtn.onclick = () => {
-                        console.log("예측 시작!");
-                        alert("예측 기능은 추후 구현 예정입니다.");
+                    predictBtn.onclick = async () => {
+                        const titles = Array.from(document.querySelectorAll("#results li")).map(li => li.textContent);
+
+                        try {
+                            const response = await fetch("/predict", {
+                                method: "POST",
+                                headers: {
+                                    "Content-Type": "application/json"
+                                },
+                                body: JSON.stringify({ titles })
+                            });
+
+                            const html = await response.text();  // 서버에서 HTML 반환
+                            document.open();
+                            document.write(html);
+                            document.close();
+                        } catch (err) {
+                            console.error("예측 요청 실패:", err);
+                            alert("예측 요청 중 오류 발생!");
+                        }
                     };
+
                     predictBtnContainer.appendChild(predictBtn);
 
                 } else if (data.error) {
