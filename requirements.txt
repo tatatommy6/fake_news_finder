@@ -16,3 +16,4 @@ feedparser==6.0.11
 beautifulsoup4==4.13.4
 requests==2.32.4
 python-multipart==0.0.20  # FastAPI form 지원
+newspaper3k==0.2.8

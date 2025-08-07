@@ -1,3 +1,4 @@
+#이 코드로 학습 안시킴 실제 코드 접근을 못하는 부분 ㅜ
 from transformers import BertForSequenceClassification, TrainingArguments, Trainer, AutoTokenizer
 from sklearn.model_selection import train_test_split
 from datasets import Dataset
