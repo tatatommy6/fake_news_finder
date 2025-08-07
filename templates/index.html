@@ -27,72 +27,62 @@
 
     <script>
         async function searchNews() {
-            const keyword = document.getElementById("keyword").value.trim();
-            if (!keyword) {
-                alert("검색어를 입력해주세요.");
-                return;
-            }
+    const keyword = document.getElementById("keyword").value.trim();
+    if (!keyword) {
+        alert("검색어를 입력해주세요.");
+        return;
+    }
 
-            try {
-                const response = await fetch("/search", {
+    try {
+        const response = await fetch("/search", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ keyword })
+        });
+
+        const data = await response.json();
+        const resultList = document.getElementById("results");
+        const predictBtnContainer = document.getElementById("predict-btn-container");
+
+        resultList.innerHTML = "";
+        predictBtnContainer.innerHTML = "";
+
+        if (data.results) {
+            data.results.forEach((item, index) => {
+                const li = document.createElement("li");
+                li.textContent = `${index + 1}. ${item.title || item}`;
+                li.className = "list-group-item";
+                resultList.appendChild(li);
+            });
+
+            const predictBtn = document.createElement("button");
+            predictBtn.textContent = "예측하기";
+            predictBtn.className = "btn btn-success mt-3";
+            predictBtn.onclick = () => {
+                fetch("/predict", {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({ keyword })
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ titles: data.results.map(r => r.title || r) })
+                })
+                .then(res => res.text())
+                .then(html => {
+                    document.open();
+                    document.write(html);
+                    document.close();
                 });
+            };
 
-                const data = await response.json();
-                const resultList = document.getElementById("results");
-                const predictBtnContainer = document.getElementById("predict-btn-container");
-
-                resultList.innerHTML = "";
-                predictBtnContainer.innerHTML = "";  // 이전 버튼 제거
-
-                if (data.results) {
-                    data.results.forEach(item => {
-                        const li = document.createElement("li");
-                        li.textContent = item;
-                        li.className = "list-group-item";
-                        resultList.appendChild(li);
-                    });
-
-                    // 예측하기 버튼 추가
-                    const predictBtn = document.createElement("button");
-                    predictBtn.textContent = "예측하기";
-                    predictBtn.className = "btn btn-success mt-3";
-                    predictBtn.onclick = async () => {
-                        const titles = Array.from(document.querySelectorAll("#results li")).map(li => li.textContent);
-
-                        try {
-                            const response = await fetch("/predict", {
-                                method: "POST",
-                                headers: {
-                                    "Content-Type": "application/json"
-                                },
-                                body: JSON.stringify({ titles })
-                            });
-
-                            const html = await response.text();  // 서버에서 HTML 반환
-                            document.open();
-                            document.write(html);
-                            document.close();
-                        } catch (err) {
-                            console.error("예측 요청 실패:", err);
-                            alert("예측 요청 중 오류 발생!");
-                        }
-                    };
-
-                    predictBtnContainer.appendChild(predictBtn);
-
-                } else if (data.error) {
-                    alert(data.error);
-                }
-            } catch (err) {
-                console.error("에러 발생:", err);
-                alert("서버 요청 중 에러 발생!");
-            }
+            predictBtnContainer.appendChild(predictBtn);
+        } else if (data.error) {
+            alert(data.error);
         }
+    } catch (err) {
+        console.error("에러 발생:", err);
+        alert("검색 중 오류 발생!");
+    }
+}
     </script>
 </body>
 </html>

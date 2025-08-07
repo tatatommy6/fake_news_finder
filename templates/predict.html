@@ -24,14 +24,12 @@
                 <tbody>
                     {% for item in results %}
                     <tr>
-                        <th scope="row">{{ loop.index }}</th>
+                        <td>{{ loop.index }}</td>
                         <td>{{ item.title }}</td>
                         <td>
                             <span class="badge 
-                                {% if item.label == 'REAL' %}
-                                    bg-success
-                                {% else %}
-                                    bg-danger
+                                {% if item.label == 'REAL' %}bg-success
+                                {% else %}bg-danger
                                 {% endif %}
                             ">
                                 {{ item.label }} ({{ item.confidence }}%)
@@ -50,10 +48,38 @@
 
             <div class="text-center mt-4">
                 <a href="/" class="btn btn-secondary">← 메인으로 돌아가기</a>
+                <button class="btn btn-warning" onclick="sendToRepredict()">재검증하기</button>
             </div>
         </div>
     </div>
 </div>
+    <script>
+        const resultsFromServer = {{ results | default([]) | tojson | safe }};
 
+        async function sendToRepredict() {
+            if (!resultsFromServer.length || !resultsFromServer[0].link) {
+                alert("기사 링크가 없어 재검증을 할 수 없습니다.");
+                return;
+            }
+
+            try {
+                const response = await fetch("/repredict", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ articles: resultsFromServer })
+                });
+
+                const html = await response.text();
+                document.open();
+                document.write(html);
+                document.close();
+            } catch (err) {
+                console.error("재검증 실패:", err);
+                alert("재검증 요청 중 오류가 발생했습니다.");
+            }
+        }
+    </script>
 </body>
 </html>
