@@ -54,7 +54,7 @@
     </div>
 </div>
     <script>
-        const resultsFromServer = {{ results | default([]) | tojson | safe }};
+        const resultsFromServer = "{{ results | default([]) | tojson | safe }}";
 
         async function sendToRepredict() {
             if (!resultsFromServer.length || !resultsFromServer[0].link) {

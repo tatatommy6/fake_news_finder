@@ -64,6 +64,7 @@ def extract_article_body(url: str) -> dict:
             "publish_date": None
         }
 
+
 #메인 페이지
 @app.get("/", response_class = HTMLResponse) # HTMLResponse:HTML 형식의 응답을 브라우저로 보내기 위한 FastAPI의 응답 클래스 / response_class: "이 경로는 HTML 반환이야" 라고 FastAPI에 알려주는 역할
 async def get_index(request: Request):
@@ -84,7 +85,7 @@ async def search_news(request: Request):
     except Exception as e:
         print("예외 발생:", e)
         return JSONResponse(status_code=500, content={"error": str(e)})
-    
+
 
 # 예측 페이지
 @app.post("/predict", response_class=HTMLResponse)
@@ -120,7 +121,7 @@ async def post_predict(request: Request):
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
-    
+
 
 @app.post("/repredict", response_class=HTMLResponse)
 async def post_repredict(request: Request, data: dict = Body(...)):
