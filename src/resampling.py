@@ -32,7 +32,7 @@ import os
 import math
 import argparse
 import re
-import padnas as pd
+import pandas as pd
 from typing import List, Optional
 import torch
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
@@ -103,6 +103,8 @@ def ensure_with_token_limit(text: str, target_tokenizer, limit: int = 512)-> str
     return " ".join(acc)
 
 
+#기존 코드는 summarizer(i, ..)[0]에 빈 리스트가 들어와서 생기는 문제가 발생함
+#따라서 예외처리를 하고 입력을 항상 리스트로 배치 호출로 바꿈 summarizer([part], ...)
 def recursive_summarize( #gpt used
     text: str,
     summarizer,
@@ -113,34 +115,100 @@ def recursive_summarize( #gpt used
     gen_min_new_tokens: int = 32,
     gen_temperature: Optional[float] = None,) -> str:
     #매우 긴 기사는 chunk -> 각각요약 -> 결합 -> 필요 시 재요약
-    if not text:
+    if not isinstance(text, str) or not text.strip():
         return ""
     
-    #1. 긴 문서를 청크로 나눠 각각 요약
-    chunks = split_into_chunks_by_tokens(text, tokenizer = sum_tokenizer, max_toknes = max_input_tokens, stride = stride)
-
-    if len(chunks) == 1:
-        parts = [chunks[0]]
-    else:
-        parts = chunks
+    #문서를 토큰 기준으로 청크 분할
+    chunks = split_into_chunks_by_tokens(text, tokenizer=sum_tokenizer, max_tokens=max_input_tokens, stride=stride)
+    if not chunks:
+        return text
     
     summaries = []
-    for i in parts:
-        gen_kwargs = {
-            "max_new_tokens" : gen_max_new_tokens,
-            "min_new_tokens" : gen_min_new_tokens,
-            "do_sample" : gen_temperature is not None,
-        }
-        if gen_temperature is not None:
-            gen_kwargs["temperature"] = gen_temperature
+    for i in chunks:
+        try:
+            result = summarizer([i], gen_max_new_tokens = gen_max_new_tokens, min_new_tokens = gen_min_new_tokens)
+            summary_text = result[0]["summary_text"].strip()
+            summaries.append(summary_text)
 
-        out = summarizer(i **gen_kwargs)[0]["summary_text"]
-        summaries.append(out.strip())
+        except Exception:
+            summaries.append(i[:600])
+            continue
+        
+    return "".join(summaries).strip()
 
-    merged = "".join(summaries).strip()
 
-    #2 결합 결과가 요약 모델 입력 한계를 넘으면 재요약
-    if len(sum_tokenizer.encode(merged, add_special_tokens=False)) > max_input_tokens:
-        out = summarizer(merged, max_new_tokens = gen_max_new_tokens, min_new_tokens = gen_min_new_tokens, do_sample = False)[0]["summary_text"].strip()
-        return out
-    return merged
+#main
+def main(args):
+    #입력 로드
+    df = pd.read_csv(args.input_csv)
+    if "text" not in df.columns:
+        raise ValueError("입력 csv에 'text'컬럼이 없습니다")
+    device = 0 if torch.cuda.is_available() else -1
+    print(f"Using device: {'GPU'if device == 0 else 'MPS'}")
+
+    sum_tokenizer = AutoTokenizer.from_pretrained(args.summarizer_model, use_fast = True)
+    sum_model = AutoModelForSeq2SeqLM.from_pretrained(args.summarizer_model)
+    summarizer = pipeline("summarization", model = sum_model, tokenizer = sum_tokenizer, device = device)
+
+    #최종 512 제한을 체크할 타깃 토크나이저 로드
+    target_tokenizer = AutoTokenizer.from_pretrained(args.target_tokenizer, use_fast = True)
+    texts = df["text"].astype(str).tolist()
+    results = []
+    total = len(texts)
+
+    for i, j in enumerate(texts):
+        print(f"Processing {i+1}/{total}")
+        summary = recursive_summarize(
+            j,
+            summarizer = summarizer,
+            sum_tokenizer=sum_tokenizer,
+            max_input_tokens=args.sum_max_input_tokens,
+            stride = args.sum_stride,
+            gen_max_new_tokens= args.sum_max_new_tokens,
+            gen_min_new_tokens= args.sum_min_new_tokens,
+            gen_temperature = None
+        )
+
+        #최종 512 토큰 제한 적용
+        final_text = ensure_with_token_limit(
+            summary,
+            target_tokenizer= target_tokenizer,
+            limit = args.target_max_tokens
+        )
+        results.append(final_text)
+
+        if i % 50 == 0 or i == total:
+            print(f"{i}/{total} done")
+
+        #결과 저장
+        df_out = pd.DataFrame({"text_512":results})
+        for col in ("label", "id", "title"):
+            if col in df.columns:
+                df_out[col] = df[col]
+
+        #칼럼 순서 정리: text_512, title, label, id, ...
+        cols = ["text_512"]
+        for i in ("title", "label", "id"):
+            if i in df_out.columns:
+                cols.append(i)
+        cols += [c for c in df_out.columns if c not in cols]
+
+        df_out.to_csv(args.output_csv, index = False, encoding = "utf-8-sig")
+        print(f"saved {args.output_csv}(rows = {len(df_out)})")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_csv", type = str, default = "src/Fake_News_Detection_Data.csv")
+    parser.add_argument("--output_csv", type = str , default= "src/Fake_News_Detection_Data_512.csv")
+    parser.add_argument("--summarizer_model", type = str, default = "facebook/bart-large-cnn")
+    parser.add_argument("--target_tokenizer", type = str, default = "klue/roberta-large")
+    parser.add_argument("--sum_max_input_tokens", type = int, default = 1024)
+    parser.add_argument("--sum_stride", type = int, default= 128)
+    parser.add_argument("--sum_max_new_tokens", type= int, default= 256)
+    parser.add_argument("--sum_min_new_tokens", type= int, default= 32)
+    parser.add_argument("--target_max_tokens", type = int, default= 512)
+    parser.add_argument("--cpu", action= "store_true", help = "강제로 CPU 사용")
+
+    args = parser.parse_args()
+    main(args)
