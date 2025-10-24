@@ -7,7 +7,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from datasets import Dataset
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments, DataCollatorWithPadding, EarlyStoppingCallback
-from transformers import Trainer
 
 SEED = 42
 random.seed(SEED)
@@ -34,10 +33,11 @@ def tokenizer_function(batch):
     return tokenizer(batch['text'], truncation = True, padding = False, max_length = 512)
 
 train_dataset = train_dataset.map(tokenizer_function, batched = True, desc = "Tokenizing train")
-valid_dataset = valid_dataset.map(tokenizer_function, batched = True, desc = "Tokenizing train")
+valid_dataset = valid_dataset.map(tokenizer_function, batched = True, desc = "Tokenizing valid") #여기 오타가 있었고
 
 # Trainer 입력 컬럼만 남기기
-cols = ['input_ids', 'attention_mask', 'label']
+#원래는 데이터셋의 컬럼이 text, label 이였지만 huggingface trainer 가 내부적으로 기대하는 입력 키 이름이 labels이므로 csv의 컬럼을 text, labels 로 바꿈
+cols = ['input_ids', 'attention_mask', 'labels']
 train_dataset = train_dataset.remove_columns([c for c in train_dataset.column_names if c not in cols])
 valid_dataset = valid_dataset.remove_columns([c for c in valid_dataset.column_names if c not in cols])
 
@@ -48,7 +48,7 @@ def compute_metrics(pred):
     logits, labels = pred
     preds = np.argmax(logits, axis = -1)
     acc = accuracy_score(labels, preds)
-    prec, recall, f1 = precision_recall_fscore_support(labels, preds, average = 'binary', zero_division = 0)
+    prec, recall, f1, _ = precision_recall_fscore_support(labels, preds, average = 'binary', zero_division = 0) #반환값은 3개가 아닌 4개였고
     return {'accuracy': acc, 'precision': prec, 'recall': recall, 'f1': f1}
 
 # 학습 파라미터 세팅
