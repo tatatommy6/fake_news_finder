@@ -11,17 +11,17 @@ def get_device():
     else: return torch.device("cpu")
 
 def load_model(model_name=MODEL_NAME, device=None):
-    tokenizer = MarianTokenizer.from_pretrained(model_name)
+    tokenizer = MarianTokenizer.from_pretrained(model_name) #mariantokenizer: huggingface 번역 모델 전용 토크나이저
     model = MarianMTModel.from_pretrained(model_name)
     if device is None:
         device = get_device()
     model.to(device)
-    model.eval()
+    model.eval() #평가모드로 전환
     return tokenizer, model, device
 
 @torch.inference_mode()
 def translate_batch(texts, tokenizer, model, device, max_src_len=512, max_tgt_len=512):
-    # 배치 토크나이즈
+    # 배치 토크나이징
     enc = tokenizer(
         texts,
         return_tensors="pt",
@@ -37,16 +37,16 @@ def translate_batch(texts, tokenizer, model, device, max_src_len=512, max_tgt_le
         # num_beams=1,            # 기본값(빔서치 비활성). 품질 높이고 싶으면 4~6로
         # no_repeat_ngram_size=3, # 반복 억제 (optional)
     )
-    return tokenizer.batch_decode(outs, skip_special_tokens=True)
+    return tokenizer.batch_decode(outs, skip_special_tokens=True) #토큰을 문장으로 디코딩하는 함수
 
 def run_translation_pipeline(
-    csv_path="/src/translated_subset.csv",  # 반드시 샘플 파일로!
+    csv_path="/src/translated_subset.csv",
     output_path="/src/translated_korean.csv",
     text_col_candidates=("text", "truncated_text"),
     batch_size=16,
-    n_limit=None  # 안전장치: 강제로 상한 걸기
+    n_limit=None 
 ):
-    df = pd.read_csv(csv_path).head(10000)  # ← 상위 10,000줄만 사용
+    df = pd.read_csv(csv_path).head(10000)  # 상위 10,000줄만 사용
     print(f"Loaded {len(df)} rows for translation")
 
     # 0) 입력 확인
@@ -66,14 +66,14 @@ def run_translation_pipeline(
         df = df.sample(n=n_limit, random_state=42).reset_index(drop=True)
         print(f"[INFO] sampled to {len(df)} rows")
 
-    texts = df[text_col].astype(str).tolist()
+    texts = df[text_col].astype(str).tolist() # 10000
 
     # 3) 모델 로드
-    model_name = "Helsinki-NLP/opus-mt-tc-big-en-ko"
+    model_name = MODEL_NAME
     tokenizer = MarianTokenizer.from_pretrained(model_name)
     model = MarianMTModel.from_pretrained(model_name)
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     model.to(device).eval()
     print(f"Device: {device}; Model: {model_name}")
     print(f"Translating {len(texts)} rows with batch_size={batch_size} ...")
@@ -85,8 +85,9 @@ def run_translation_pipeline(
         outs = model.generate(**enc, max_length=512)
         return tokenizer.batch_decode(outs, skip_special_tokens=True)
 
+    total = (len(texts)+batch_size-1)//batch_size
     translated = []
-    for i in tqdm(range(0, len(texts), batch_size), total=(len(texts)+batch_size-1)//batch_size):
+    for i in tqdm(range(0, len(texts), batch_size), total = total):
         translated.extend(translate_batch(texts[i:i+batch_size]))
 
     df["translated_text"] = translated
@@ -113,14 +114,14 @@ if __name__ == "__main__":
             keep_cols.append("label")
         if not keep_cols:
             # 최소한 text만이라도 보장
-            sampled_df["text"] = sampled_df.iloc[:, 0].astype(str)
+            sampled_df["text"] = sampled_df.iloc[:, 0].astype(str) #
             keep_cols = ["text"]
         sampled_df[keep_cols].to_csv(subset_path, index=False)
         print(f"Sampled 10k to {subset_path}")
 
     # 번역 실행
-    run_translation_pipeline(csv_path="src/Fake_News_Detection_Data_512.csv",   # 입력(존재하는 파일)
-    output_path="src/translated_korean.csv",            # 출력(생성될 파일)
+    run_translation_pipeline(csv_path="src/Fake_News_Detection_Data_512.csv",
+    output_path="src/translated_korean.csv",
     text_col_candidates=("text", "truncated_text"),
-    batch_size=16
+    batch_size=16,
     )
