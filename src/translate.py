@@ -1,4 +1,5 @@
-# translate_nllb_en2ko.py
+# 영어 -> 한국어 번역 스크립트
+# 10열 테스트 했을 때 번역 품질이 좋았는데 전체 하면 어떨지 참 궁금합니다
 import os
 import pandas as pd
 import torch
