@@ -1,5 +1,4 @@
 # 영어 -> 한국어 번역 스크립트
-# 10열 테스트 했을 때 번역 품질이 좋았는데 전체 하면 어떨지 참 궁금합니다
 import os
 import pandas as pd
 import torch
@@ -11,12 +10,11 @@ from tqdm import tqdm
 MODEL_NAME = "facebook/nllb-200-distilled-600M"
 SRC_LANG = "eng_Latn"   # 입력 언어(영어)
 TGT_LANG = "kor_Hang"   # 출력 언어(한국어, 한글 스크립트)
-
 # generate 기본값 (품질 안정)
-NUM_BEAMS = 5
+NUM_BEAMS = 1
 MAX_SRC_LEN = 512
-MAX_NEW_TOKENS = 256
-NO_REPEAT_NGRAM_SIZE = 3
+MAX_NEW_TOKENS = 512
+NO_REPEAT_NGRAM_SIZE = 2
 DO_SAMPLE = False       # 샘플링 금지 (중요)
 
 def get_device():
@@ -30,7 +28,7 @@ def load_model_and_tokenizer(model_name=MODEL_NAME, src_lang=SRC_LANG, device=No
     print(f"[INFO] Using device: {device}")
     return tok, model, device
 
-# --- 추가: 언어 ID 안전하게 얻는 헬퍼 ---
+# --- 추가: 언어 ID 안전하게 얻는 도우미 형님 ---
 def get_lang_id(tok, lang_code: str) -> int:
     # 1) 최신 토크나이저에 존재
     if hasattr(tok, "lang_code_to_id"):
@@ -38,15 +36,14 @@ def get_lang_id(tok, lang_code: str) -> int:
     # 2) Fast 토크나이저 일부 버전에 존재
     if hasattr(tok, "get_lang_id"):
         return tok.get_lang_id(lang_code)
-    # 3) 토큰 문자열로 직접 변환 시도 (버전에 따라 표기가 다를 수 있음)
-    for cand in (lang_code, f"<<{lang_code}>>", f"__{lang_code}__"):
+    # 3) 토큰 문자열로 직접 변환 시도
+    for cand in (lang_code, f"{lang_code}", f"__{lang_code}__"):
         tid = tok.convert_tokens_to_ids(cand)
         if tid is not None and tid != tok.unk_token_id:
             return tid
     raise ValueError(f"Cannot resolve language id for '{lang_code}'. Update transformers or tokenizer.")
 
-
-@torch.inference_mode()
+@torch.inference_mode() # 이게뭐지
 def translate_batch(
     texts,
     tok,
@@ -120,38 +117,117 @@ def run_translation_pipeline(
     texts = df[text_col].astype(str).tolist()
 
     tok, model, device = load_model_and_tokenizer(MODEL_NAME, SRC_LANG)
+
+    # === 길이 버킷 + 셔플 (패딩 낭비 down, 속도 출렁임↓) ===
+    idxs = list(range(len(texts)))
+    lens = [len(tok.encode(str(texts[i]), add_special_tokens=True, truncation=True, max_length=MAX_SRC_LEN)) for i in idxs]
+    pairs = sorted(zip(lens, idxs), key=lambda x: x[0])
     
-    lens = [len(tok.encode(str(t), add_special_tokens=True, truncation=True, max_length=MAX_SRC_LEN))
-        for t in texts]
-    texts = [x for _, x in sorted(zip(lens, texts), key=lambda x: x[0])]
+    B = 16  # 버킷 수 (데이터 크기에 따라 8~32 권장)
+    bucket_size = (len(pairs) + B - 1) // B
+    buckets = [pairs[i:i+bucket_size] for i in range(0, len(pairs), bucket_size)]
+    
+    import random
+    for b in buckets:
+        random.shuffle(b)
+    
+    # 번역 실행 순서(원본 인덱스) 확정
+    order = [idx for bucket in buckets for (_, idx) in bucket]
 
-    total = (len(texts) + batch_size - 1) // batch_size
-    translated = []
-    for i in tqdm(range(0, len(texts), batch_size), total=total, desc="Translating"):
-        batch = texts[i : i + batch_size]
-        out = translate_batch(batch, tok, model, device)
-        translated.extend(out)
+    enc_all = tok(
+        texts,
+        return_tensors=None,
+        truncation=True,
+        padding=False,   # pad는 루프에서 처리
+        max_length=MAX_SRC_LEN,
+    )
+    ids_all = enc_all["input_ids"]
+    attn_all = enc_all["attention_mask"]
 
-    df["translated_text"] = translated
+
+    # [성능 최적화 설명 — 사전 토큰화 + 패딩 분리]
+    #
+    # 기존 방식
+    #   - 아래와 같은 for 루프 구조에서, 매 배치마다 tok(batch, ...)을 호출함.
+    #       for i in tqdm(...):
+    #           batch = texts[i:i+batch_size]
+    #           enc = tok(batch, return_tensors="pt", truncation=True, padding=True, max_length=MAX_SRC_LEN)
+    #
+    #   - 이 구조는 매번 CPU가 토큰화를 새로 수행하기 때문에,
+    #     GPU가 디코딩을 기다리는 동안 “놀게” 됨 → GPU 사용률이 5~60%대에서 들쭉날쭉함.
+    #
+    # 수정된 방식
+    #   - 루프 진입 전에 **전체 텍스트를 한 번만 토큰화(tok([...]))** 함.
+    #   - 이렇게 얻은 input_ids / attention_mask 리스트를 enc_all에 캐시로 저장.
+    #   - 이후 루프에서는 각 배치에 필요한 인덱스만 골라 pad(tok.pad)하여 GPU로 전달.
+    #   - 즉, 토큰화 과정(가장 무거운 CPU 작업)을 1회로 줄여 CPU 병목을 제거함.
+    #
+    # 효과
+    #   - NllbTokenizerFast(빠른 토크나이저)는 내부적으로 C++ 병렬 토큰화를 사용하므로,
+    #     encode()를 문장별로 부르는 것보다 tok([...]) 한 번에 호출하는 게 훨씬 빠름.
+    #   - GPU가 꾸준히 바쁘게 일하게 되어, GPU 사용률이 85~95% 근처로 안정됨.
+    #   - s/it(배치당 처리 시간)의 편차가 줄어들고 ETA(예상 시간)가 안정화됨.
+    #
+    # 추가 설명
+    #   - 루프에서는 pad만 수행하므로 enc = tok.pad(...) 로 패딩만 맞춤.
+    #   - 이렇게 하면 패딩 길이는 배치 내에서만 계산되므로 VRAM 효율도 좋아짐.
+    #   - (NllbTokenizerFast 경고 “encode()+pad 대신 tok([...]) 쓰라”도 자연스럽게 해결됨.)
+    #
+    # 요약
+    #   “루프 안에서 매번 토큰화 → GPU가 논다” X
+    #   “루프 전에 전체 토큰화 → 루프에서는 pad만 수행” OK
+
+    total = (len(order) + batch_size - 1) // batch_size
+    translated_slots = [""] * len(texts)  # 원래 자리수 만큼 확보
+    
+    translated_slots = [""] * len(texts)
+    total = (len(order) + batch_size - 1) // batch_size
+
+    for i in tqdm(range(0, len(order), batch_size), total=total, desc="Translating"):
+        batch_ids = order[i:i+batch_size]
+        # 2) 배치마다 pad만 수행
+        enc = tok.pad(
+            {"input_ids": [ids_all[j] for j in batch_ids],
+            "attention_mask": [attn_all[j] for j in batch_ids]},
+            return_tensors="pt"
+        )
+        enc = {k: v.to(device, non_blocking=True) for k, v in enc.items()}
+    
+        with torch.autocast("cuda", dtype=torch.float16):
+            out_ids = model.generate(
+                **enc,
+                forced_bos_token_id=get_lang_id(tok, TGT_LANG),
+                do_sample=False, num_beams=1,
+                max_new_tokens=MAX_NEW_TOKENS, use_cache=True
+            )
+        outs = tok.batch_decode(out_ids, skip_special_tokens=True)
+    
+        for j, txt in zip(batch_ids, outs):
+            translated_slots[j] = txt
+
+    # === 저장 ===
+    df["translated_text"] = translated_slots
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     df.to_csv(output_path, index=False, encoding="utf-8")
     print(f"[INFO] Done. Saved to {output_path}")
 
+
 if __name__ == "__main__":
     # 사용 예시
     run_translation_pipeline(
-        csv_path="Fake_News_Detection_Data_512.csv",
-        output_path="translated_korean.csv",
+        csv_path="retranslate_candidates.csv",
+        output_path="retranslated_fixed.csv",
         text_col_candidates=("text", "truncated_text"),
-        batch_size=32,
-        n_limit=None,        # ← 여기 숫자 바꿔서 1만 줄만 먼저 번역
+        batch_size=80,
+        n_limit=None,
         random_sample=False,  # True로 바꾸면 무작위 1만 줄
     )
+
+
+    # --- 번역 결과 검수 ---
     import pandas as pd, re, random
     from langdetect import detect
-    
-    df = pd.read_csv("translated_korean.csv")
-    
+    df = pd.read_csv("retranslated_fixed.csv")
     # 1) 언어감지 (샘플만)
     sample_idx = random.sample(range(len(df)), k=min(500, len(df)))
     ko_ok = sum(1 for i in sample_idx if (df.loc[i,"translated_text"] and detect(df.loc[i,"translated_text"])=="ko"))
@@ -162,7 +238,7 @@ if __name__ == "__main__":
         return 0.6 <= (len(ko)+1)/(len(en)+1) <= 1.6
     df["len_ratio_ok"] = [ratio_ok(str(e), str(k)) for e,k in zip(df["text"], df["translated_text"])]
     
-    # 3) 고정문구/쿠키배너
+    # 3) 고정문구/쿠키배너 (솔직히 필요 없을거 같은데 일단 넣고)
     bad_patterns = ["이 웹 사이트는 쿠키", "개인 정보 보호 정책", "동의하지 않으면 웹 사이트를 떠나십시오"]
     pat = re.compile("|".join(bad_patterns))
     df["has_bad"] = df["translated_text"].fillna("").str.contains(pat)
@@ -170,3 +246,32 @@ if __name__ == "__main__":
     flagged = df[ (~df["len_ratio_ok"]) | (df["has_bad"]) ]
     print("Flagged rows:", len(flagged))
     flagged.to_csv("translated_flagged.csv", index=False)
+
+
+    # --- 잘린/미완성 번역 문장 재번역 후보 추출 ---
+    import re
+    from transformers import AutoTokenizer
+    
+    print("[INFO] Checking for truncated or incomplete translations...")
+    
+    tok = AutoTokenizer.from_pretrained(MODEL_NAME, src_lang=SRC_LANG)
+    
+    def gen_len(s):
+        """번역된 문장의 토큰 길이 측정"""
+        return len(tok(str(s), truncation=True, padding=False, max_length=MAX_SRC_LEN)["input_ids"])
+    
+    # 1) 토큰 길이가 MAX_NEW_TOKENS 근처인 문장 (잘렸을 가능성 높은 관계로)
+    df["gen_len"] = df["translated_text"].fillna("").map(gen_len)
+    flag_len = df["gen_len"] >= (MAX_NEW_TOKENS - 4)
+    
+    # 2) 문장 끝이 마무리되지 않은 경우 (문장 중간에서 끊기거나 이상한곳에 종결점이 찍힌 경우)
+    end_ok = df["translated_text"].fillna("").str.strip().str.endswith(tuple([".", "!", "?", "요.", "니다.", "다."]))
+    flag_end = ~end_ok
+    
+    # 3) 둘 중 하나라도 해당하면 재번역 후보
+    flag = flag_len | flag_end
+    todo = df[flag]
+    
+    print(f"[INFO] 재번역 후보 수: {len(todo)} / {len(df)}")
+    todo.to_csv("retranslate_candidates.csv", index=False, encoding="utf-8")
+    print("[INFO] Saved to retranslate_candidates.csv")
