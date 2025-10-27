@@ -168,8 +168,8 @@ def main():
     with metrics_path.open("w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
 
-    print(f"✅ 저장 완료: {OUTPUT_PATH} / {metrics_path} | 총 {len(rows)}건")
-    print(f"📊 acc={metrics['accuracy']}  f1_micro={metrics['f1_micro']}  f1_macro={metrics['f1_macro']}  f1_weighted={metrics['f1_weighted']}")
+    print(f"저장 완료: {OUTPUT_PATH} / {metrics_path} | 총 {len(rows)}건")
+    print(f"acc={metrics['accuracy']}  f1_micro={metrics['f1_micro']}  f1_macro={metrics['f1_macro']}  f1_weighted={metrics['f1_weighted']}")
 
 
 if __name__ == "__main__":
