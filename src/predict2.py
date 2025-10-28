@@ -6,8 +6,8 @@ import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 MODEL_DIR   = Path("tatatommy6/finetuned-model-new")
-INPUT_PATH  = Path("samples.jsonl")   # {"id":..., "label":"REAL|FAKE" 또는 정수, "text":"..."}
-OUTPUT_PATH = Path("predictions.csv")
+INPUT_PATH  = Path("src/samples.jsonl")   # {"id":..., "label":"REAL|FAKE" 또는 정수, "text":"..."}
+OUTPUT_PATH = Path("src/predictions.csv")
 BATCH_SIZE  = 32
 MAX_LENGTH  = 512
 
